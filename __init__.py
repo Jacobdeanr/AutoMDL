@@ -1,4 +1,3 @@
-
 bl_info = {
     "name": "AutoMDL",
     "author": "NvC_DmN_CH",
@@ -558,10 +557,9 @@ class AutoMDLOperator(bpy.types.Operator):
             sb.write(f"{material_name}\n0  {pos_a.x:.6f} {pos_a.y:.6f} {pos_a.z:.6f}  {normal_a.x:.6f} {normal_a.y:.6f} {normal_a.z:.6f}  {uv_a.x:.6f} {uv_a.y:.6f} 0\n0  {pos_b.x:.6f} {pos_b.y:.6f} {pos_b.z:.6f}  {normal_b.x:.6f} {normal_b.y:.6f} {normal_b.z:.6f}  {uv_b.x:.6f} {uv_b.y:.6f} 0\n0  {pos_c.x:.6f} {pos_c.y:.6f} {pos_c.z:.6f}  {normal_c.x:.6f} {normal_c.y:.6f} {normal_c.z:.6f}  {uv_c.x:.6f} {uv_c.y:.6f} 0\n")
 
 
-
 class AutoMDLPanel(bpy.types.Panel):
     bl_label = "AutoMDL"
-    bl_idname = "PT_AutoMDLPanel"
+    bl_idname = "VIEW3D_PT_automdl_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'AutoMDL'
@@ -618,9 +616,7 @@ class AutoMDLPanel(bpy.types.Panel):
         
                 #row = layout.row()
                 #row.enabled = phy_mesh_valid
-                #row.prop(context.scene, "concave", text="Concave");
-        
-        
+                #row.prop(context.scene, "concave", text="Concave");     
         
         row = layout.row()
         row.label(text= " ")
@@ -670,7 +666,6 @@ class AutoMDLPanel(bpy.types.Panel):
 
 
 # for cdmaterials list
-
 class CdMaterialsPropGroup(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty()
 
@@ -708,30 +703,63 @@ class_register, class_unregister = bpy.utils.register_classes_factory(classes)
 
 def register():
     from bpy.utils import register_class
+
+    # Register classes
     for cls in classes:
-        register_class(cls)
+        try:
+            register_class(cls)
+        except Exception as e:
+            print(f"Error registering class {cls.__name__}: {e}")
     
-    # surfaceprop dropdown
+    # Define custom properties for the addon
+    register_custom_properties()
+
+    # Initialize Steam path and game paths list
+    setup_steam_path()
+
+    # Set default values after a short delay to allow context initialization
+    bpy.app.timers.register(set_default_values, first_interval=1)
+
+    print("AutoMDL addon registered successfully")
+
+def unregister():
+    from bpy.utils import unregister_class
+
+    # Unregister classes
+    for cls in reversed(classes):
+        try:
+            unregister_class(cls)
+        except Exception as e:
+            print(f"Error unregistering class {cls.__name__}: {e}")
+
+    # Remove custom properties
+    unregister_custom_properties()
+
+    print("AutoMDL addon unregistered successfully")
+
+def set_default_values():
+    try:
+        # Initialize default values for custom properties
+        initialize_cdmaterials_list()
+        
+        if game_select_method_is_dropdown:
+            select_default_game_path()
+        else:
+            onGameManualTextInputChanged(None, bpy.context)
+
+        print("Default values set successfully")
+    except Exception as e:
+        print(f"Error setting default values: {e}")
+
+def register_custom_properties():
     bpy.types.Scene.surfaceprop_text_input = bpy.props.StringProperty(name="", default="")
-    
-    # mass text input
-    bpy.types.Scene.mass_text_input = bpy.props.StringProperty(name="", default="35", description="Mass in kilograms (KG)\nBy default, the Player can +USE pick up 35KG max.\nThe gravgun can pick up 250KG max.\nThe portal gun can pick up 85KG max", update=onMassTextInputChanged)
-    
-    # vis mesh
-    bpy.types.Scene.vis_mesh = bpy.props.PointerProperty(
-        type=bpy.types.Object,
-        name="Selected Object",
-        description="Select an object from the scene"
+    bpy.types.Scene.mass_text_input = bpy.props.StringProperty(
+        name="", default="35",
+        description="Mass in kilograms (KG). By default, the Player can +USE pick up 35KG max. The gravgun can pick up 250KG max. The portal gun can pick up 85KG max.",
+        update=onMassTextInputChanged
     )
-    
-    # col mesh
-    bpy.types.Scene.phy_mesh = bpy.props.PointerProperty(
-        type=bpy.types.Object,
-        name="Selected Object",
-        description="Select an object from the scene"
-    )
-    
-    # surfaceprop
+    bpy.types.Scene.vis_mesh = bpy.props.PointerProperty(type=bpy.types.Object, name="Selected Object", description="Select an object from the scene")
+    bpy.types.Scene.phy_mesh = bpy.props.PointerProperty(type=bpy.types.Object, name="Selected Object", description="Select an object from the scene")
     bpy.types.Scene.surfaceprop = bpy.props.EnumProperty(
         name="Selected Option",
         items = [
@@ -763,39 +791,40 @@ def register():
             ("Computer", "Computer", "")
         ]
     )
-    
-    # static prop
-    bpy.types.Scene.staticprop = bpy.props.BoolProperty(
-        name="Static Prop",
-        description="Enable if used as prop_static\n($staticprop in QC)",
-        default=False
-    )
-    
-    # has transparency
-    bpy.types.Scene.mostlyopaque = bpy.props.BoolProperty(
-        name="Has Transparency",
-        description="Enabling this may fix sorting issues that come with using transparent materials. \nRenders model in 2 passes, one for opaque materials, and one for materials with transparency\n($mostlyopaque in QC)",
-        default=False
-    )
-    
-    # radio buttons for choosing how to define cdmaterials
+    bpy.types.Scene.staticprop = bpy.props.BoolProperty(name="Static Prop", description="Enable if used as prop_static\n($staticprop in QC)", default=False)
+    bpy.types.Scene.mostlyopaque = bpy.props.BoolProperty(name="Has Transparency", description="Enabling this may fix sorting issues...", default=False)
     bpy.types.Scene.cdmaterials_type = bpy.props.EnumProperty(items =
         (
             ('0','Same as MDL',''),
             ('1','Other','')
         )
     )
-    
-    # cdmaterials list
     bpy.types.Scene.cdmaterials_list = bpy.props.CollectionProperty(type=CdMaterialsPropGroup)
     bpy.types.Scene.cdmaterials_list_active_index = bpy.props.IntProperty()
-    
-    # steam path
-    global steam_path
-    global games_paths_list
-    global game_select_method_is_dropdown
+
+def unregister_custom_properties():
+    try:
+        del bpy.types.Scene.surfaceprop_text_input
+        del bpy.types.Scene.vis_mesh
+        del bpy.types.Scene.phy_mesh
+        del bpy.types.Scene.surfaceprop
+        del bpy.types.Scene.staticprop
+        del bpy.types.Scene.mostlyopaque
+        del bpy.types.Scene.mass_text_input
+        if game_select_method_is_dropdown:
+            del bpy.types.Scene.game_select
+        else:
+            del bpy.types.Scene.studiomdl_manual_input
+        del bpy.types.Scene.cdmaterials_type
+        del bpy.types.Scene.cdmaterials_list
+        del bpy.types.Scene.cdmaterials_list_active_index
+    except AttributeError as e:
+        print(f"Error removing property: {e}")
+
+def setup_steam_path():
+    global steam_path, games_paths_list, game_select_method_is_dropdown
     steam_path = getSteamInstallationPath()
-    if(steam_path != None):
+    if steam_path is not None:
         game_select_method_is_dropdown = True
         steam_path = os.path.join(steam_path, "").replace("\\", "/")
         games_paths_list = getGamesList()
@@ -803,102 +832,44 @@ def register():
     else:
         game_select_method_is_dropdown = False
         steam_path = None
-        bpy.types.Scene.studiomdl_manual_input = bpy.props.StringProperty(name="", default="", description="Path to the studiomdl.exe file", update=onGameManualTextInputChanged)
-        
-    
-    # call something after 1 second
-    bpy.app.timers.register(set_default_values, first_interval=1) # workaround for not being able to use context in register()
+        bpy.types.Scene.studiomdl_manual_input = bpy.props.StringProperty(
+            name="", default="", description="Path to the studiomdl.exe file", update=onGameManualTextInputChanged
+        )
 
-def set_default_values():
-    # set default of cdmaterials list
+def initialize_cdmaterials_list():
     bpy.context.scene.cdmaterials_list.clear()
     bpy.ops.uilist.entry_add(list_path="scene.cdmaterials_list", active_index_path="scene.cdmaterials_list_active_index")
     bpy.context.scene.cdmaterials_list[0].name = "models/"
-    
-    # we need to update the dropdown once to let the default value affect the rest of the program, as if we selected it manually
-    # before that let's select a default value for it
-    global game_select_method_is_dropdown
-    if game_select_method_is_dropdown:
-        
-        # if certain games exist, select one of them instead of defaulting to selecting the game in the first option
-        chosen_game_path = None
-        recognized_game_path_gmod = None
-        recognized_game_path_hl2 = None
-        recognized_game_path_sdk = None
-        
-        global games_paths_list
-        for i in range(len(games_paths_list)):
-            game_path = str(games_paths_list[i])
-            game_path_lowercase = game_path.lower()
-            
-            # we're not checking for specific strings because from what i saw the names of the games aren't consistent across users
-            # like idk, i remember seeing "Half Life 2" as "Half-Life 2" and "Half Life: 2" which is weird but idk
-            # i may be wrong but, we do this for now and im actually happy with it
-            # 
-            # checking smaller strings first for optimization (but not if its gonna be a very common string)
-            
-            if "mod" in game_path_lowercase:
-                if "s" in game_path_lowercase:
-                    if "garry" in game_path_lowercase:
-                        # we are gonna assume its "GarrysMod" or something like that
-                        recognized_game_path_gmod = game_path
-                        continue
-            
-            if "2" in game_path_lowercase:
-                if "half" in game_path_lowercase:
-                    if "life" in game_path_lowercase:
-                        # we are gonna assume its "Half-Life 2" or something like that (episodes, lost coast etc)
-                        recognized_game_path_hl2 = game_path
-                        continue
-            
-            if "sdk" in game_path_lowercase:
-                if "2013" in game_path_lowercase:
-                    # we are gonna assume its "Source SDK Base 2013 Singleplayer" or something like that
-                    recognized_game_path_sdk = game_path
-                    continue
-        
-        # lets now define some sort of order so that we prefer some recognized games over others
-        # sdk > hl2 > gmod
-        if recognized_game_path_sdk is not None:
-            chosen_game_path = recognized_game_path_sdk
-        elif recognized_game_path_hl2 is not None:
-            chosen_game_path = recognized_game_path_hl2
-        elif recognized_game_path_gmod is not None:
-            chosen_game_path = recognized_game_path_gmod   
-        
-        # set value
-        if chosen_game_path != None:
-            bpy.context.scene.game_select = chosen_game_path
-        
-        # update once to set up things ( i removed functionality there so not needed anymore )
-        onGameDropdownChanged(None, bpy.context)
-    else:
-        # update once to set up things
-        onGameManualTextInputChanged(None, bpy.context)
 
-
-def unregister():
-    from bpy.utils import unregister_class
-    for cls in reversed(classes):
-        unregister_class(cls)
+def select_default_game_path():
+    chosen_game_path = None
+    recognized_game_path_gmod = None
+    recognized_game_path_hl2 = None
+    recognized_game_path_sdk = None
     
-    del bpy.types.Scene.surfaceprop_text_input
-    del bpy.types.Scene.vis_mesh
-    del bpy.types.Scene.phy_mesh
-    del bpy.types.Scene.surfaceprop
-    del bpy.types.Scene.staticprop
-    del bpy.types.Scene.mostlyopaque
-    del bpy.types.Scene.mass_text_input
+    for game_path in games_paths_list:
+        game_path_lowercase = str(game_path).lower()
+        if "mod" in game_path_lowercase and "s" in game_path_lowercase and "garry" in game_path_lowercase:
+            recognized_game_path_gmod = str(game_path)
+        if "2" in game_path_lowercase and "half" in game_path_lowercase and "life" in game_path_lowercase:
+            recognized_game_path_hl2 = str(game_path)
+        if "sdk" in game_path_lowercase and "2013" in game_path_lowercase:
+            recognized_game_path_sdk = str(game_path)
     
-    if game_select_method_is_dropdown:
-        del bpy.types.Scene.game_select
-    else:
-        del bpy.types.Scene.studiomdl_manual_input
+    # Define preference order for recognized game paths
+    if recognized_game_path_sdk is not None:
+        chosen_game_path = recognized_game_path_sdk
+    elif recognized_game_path_hl2 is not None:
+        chosen_game_path = recognized_game_path_hl2
+    elif recognized_game_path_gmod is not None:
+        chosen_game_path = recognized_game_path_gmod
     
-    del bpy.types.Scene.cdmaterials_type
+    # Set selected game path
+    if chosen_game_path is not None:
+        bpy.context.scene.game_select = chosen_game_path
     
-    del bpy.types.Scene.cdmaterials_list
-    del bpy.types.Scene.cdmaterials_list_active_index
+    # Trigger update
+    onGameDropdownChanged(None, bpy.context)
 
 
 def checkVisMeshHasMesh(context):
@@ -913,7 +884,6 @@ def checkPhyMeshHasMesh(context):
 
 def to_models_relative_path(file_path):
     MODELS_FOLDER_NAME = "models"
-
     
     # See if we can find a models folder up the chain
     index = file_path.rfind(MODELS_FOLDER_NAME)
@@ -927,7 +897,6 @@ def to_models_relative_path(file_path):
 
 def get_models_path(file_path):
     MODELS_FOLDER_NAME = "models"
-
     
     # See if we can find a models folder up the chain
     index = file_path.rfind(MODELS_FOLDER_NAME)
@@ -938,11 +907,7 @@ def get_models_path(file_path):
     
     return None
 
-
-
-
 # lemon's answer in https://blender.stackexchange.com/questions/75332/how-to-find-the-number-of-loose-parts-with-blenders-python-api
-
 # i would implement it myself but i haven't done much graph stuff, and speed is really needed right now, and first implementation would be slow. This here is an efficient alogrithm to count the number of loose parts inside a mesh
 
 from collections import defaultdict
