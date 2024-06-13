@@ -52,96 +52,58 @@ def defineGameSelectDropdown(self, context):
 def onGameDropdownChanged(self, context):
     pass
 
-def onMassTextInputChanged(self, context):
-    global massTextInputIsInvalid
-    massTextInputIsInvalid = not is_float(context.scene.mass_text_input)
-
-def onGameManualTextInputChanged(self, context):
-    global gameManualTextInputIsInvalid
-    gameManualTextInputIsInvalid = False
-    
-    in_folder = str(Path(os.path.join(context.scene.studiomdl_manual_input, ''))) # make sure to have a trailing slash, and its a string
-    subdir_studiomdl = os.path.join(in_folder, "studiomdl.exe")
-    has_studiomdl = os.path.exists( subdir_studiomdl )
-    if not has_studiomdl:
-        gameManualTextInputIsInvalid = True
-        print("ERROR: Couldn't find studiomdl.exe in specified folder")
-        return
-    
-    base_path = Path(os.path.dirname(in_folder))
-    gameinfo_path = None
-    # oh no, code copy pasted from getGamesList()
-    # anyway
-    # 
-    # although we need the path to the folder which contains the gameinfo
-    # so we need to iterate now again
-    _subdirectories = [x for x in base_path.iterdir() if x.is_dir()]
-    for k in range(len(_subdirectories)):
-        _subdir = _subdirectories[k]
-        has_gameinfo = os.path.exists( os.path.join(_subdir, "gameinfo.txt") )
-        
-        # currently we're returning the first folder which has a gameinfo.txt, in alot of games there are multiple folders which match this criteria. todo: is this an issue?
-        if( has_gameinfo ):
-            gameinfo_path = str(_subdir)
-            break
-    
-    if gameinfo_path == None:
-        gameManualTextInputIsInvalid = True
-        print("ERROR: Couldn't find gameinfo.txt in game")
-        return
-    
-    gameManualTextGameinfoPath = gameinfo_path
-
-
-def setGamePath(self, context, new_game_path_value):
-    global game_path
-    global studiomdl_path
-    game_path = new_game_path_value
-    studiomdl_path = os.path.join(os.path.dirname(game_path), "bin", "studiomdl.exe")
-
-# returns list of source games which have a studiomdl.exe in the bin folder
-def getGamesList():
-    global steam_path
-    common = Path(os.path.join(steam_path, r"steamapps/common"))
-    
-    # get all subdirectories in common
-    subdirectories = [x for x in common.iterdir() if x.is_dir()]
-    
-    # okay let's filter games
-    list = []
-    
-    for i in range(len(subdirectories)):
-        subdir = subdirectories[i]
-        subdir_bin = os.path.join(subdir, "bin")
-        has_bin_folder = os.path.exists( subdir_bin )
-        if( not has_bin_folder ):
-            continue
-        
-        subdir_studiomdl = os.path.join(subdir_bin, "studiomdl.exe")
-        has_studiomdl = os.path.exists( subdir_studiomdl )
-        
-        if( not has_studiomdl ):
-            continue
-        
-        # okay!
-        # although we need the path to the folder which contains the gameinfo
-        # so we need to iterate now again
-        _subdirectories = [x for x in subdir.iterdir() if x.is_dir()]
-        for k in range(len(_subdirectories)):
-            _subdir = _subdirectories[k]
-            has_gameinfo = os.path.exists( os.path.join(_subdir, "gameinfo.txt") )
-            
-            # currently we're returning the first folder which has a gameinfo.txt, in alot of games there are multiple folders which match this criteria. todo: is this an issue?
-            if( has_gameinfo ):
-                list.append(_subdir)
-                break
-    
-    return list
-
-
+#Unused. Why?
 def refreshGameSelectDropdown(self, context):
     del bpy.types.Scene.game_select
     defineGameSelectDropdown(None, context)
+    
+def onMassTextInputChanged(self, context):
+    """
+    Validates the user-provided input for the mass text field.
+    
+    This function sets the `massTextInputIsInvalid` global variable to `True` if the input value is not a valid float, or `False` if the input is a valid float.
+    
+    Args:
+        self (object): The current object instance.
+        context (bpy.types.Context): The Blender context object.
+    
+    Returns:
+        None
+    """
+        
+    global massTextInputIsInvalid
+    massTextInputIsInvalid = not is_float(context.scene.mass_text_input)
+
+def on_game_manual_text_input_changed(context):
+    """
+    Validates the user-provided path for the studiomdl.exe file and the containing gameinfo.txt file.
+    
+    Args:
+        self (object): The current object instance.
+        context (bpy.types.Context): The Blender context object.
+    
+    Returns:
+        None
+    """
+    global gameManualTextInputIsInvalid
+    gameManualTextInputIsInvalid = False
+    
+    in_folder = Path(context.scene.studiomdl_manual_input)
+    if not validate_studiomdl_path(in_folder):
+        gameManualTextInputIsInvalid = True
+        print("ERROR: Couldn't find studiomdl.exe in specified folder")
+        return
+
+    base_path = in_folder.parent
+    gameinfo_path = validate_gameinfo_path(base_path)
+
+    if not gameinfo_path:
+        gameManualTextInputIsInvalid = True
+        print("ERROR: Couldn't find gameinfo.txt in game")
+        return
+
+    global gameManualTextGameinfoPath
+    gameManualTextGameinfoPath = gameinfo_path
 
 class QCWriter:
     def write_qc_file(self, context, qc_path, qc_modelpath, qc_vismesh, qc_phymesh, qc_cdmaterials_list, has_collision, has_materials):
@@ -201,11 +163,11 @@ class MeshExporter:
             qc_phymesh (str): The path to the physical mesh.
             has_collision (bool): True if a collision mesh is present.
         """
-        self.exportObjectToSmd(context.scene.vis_mesh, os.path.join(temp_path, qc_vismesh), False)
+        self.export_object_to_smd(context.scene.vis_mesh, os.path.join(temp_path, qc_vismesh), False)
         if has_collision:
-            self.exportObjectToSmd(context.scene.phy_mesh, os.path.join(temp_path, qc_phymesh), True)
+            self.export_object_to_smd(context.scene.phy_mesh, os.path.join(temp_path, qc_phymesh), True)
 
-    def exportObjectToSmd(self, obj, path, is_collision_smd):
+    def export_object_to_smd(self, obj, path, is_collision_smd):
         """Export the object to SMD format.
 
         Args:
@@ -213,38 +175,48 @@ class MeshExporter:
             path: The path to save the SMD file.
             is_collision_smd (bool): True if the SMD is for collision.
         """
-        context_mode_snapshot = "null"
-        if bpy.context.mode != 'OBJECT':
-            context_mode_snapshot = bpy.context.active_object.mode
-            bpy.ops.object.mode_set(mode='OBJECT')
-        
+        context_mode_snapshot = switch_to_object_mode()
+
         depsgraph = bpy.context.evaluated_depsgraph_get()
         object_eval = obj.evaluated_get(depsgraph)
         mesh = object_eval.to_mesh()
         mesh.calc_loop_triangles()
-        
         mesh.transform(obj.matrix_world)
-        
+
         with open(path + ".smd", "w") as file:
-            file.write("version 1\nnodes\n0 \"root\" -1\nend\nskeleton\ntime 0\n0 0 0 0 0 0 0\nend\ntriangles\n")
+            self.write_smd_header(file)
             sb = StringIO()
             has_materials = len(obj.material_slots) > 0
-            
+
             if is_collision_smd:
-                self.exportMeshToSmd_Collision(sb, mesh)
+                self.export_collision_mesh_to_smd(sb, mesh)
             else:
-                if has_materials:
-                    self.exportMeshToSmd_WithMaterials(sb, obj, mesh)
-                else:
-                    self.exportMeshToSmd_NoMaterials(sb, mesh)
+                self.export_mesh_to_smd(sb, obj, mesh, has_materials)
             
             file.write(sb.getvalue())
             file.write("end\n")
-        
-        if context_mode_snapshot != "null":
-            bpy.ops.object.mode_set(mode=context_mode_snapshot)
 
-    def exportMeshToSmd_Collision(self, sb, mesh):
+        restore_mode(context_mode_snapshot)
+
+    def write_smd_header(self, file):
+        """Write the header for the SMD file."""
+        file.write("version 1\nnodes\n0 \"root\" -1\nend\nskeleton\ntime 0\n0 0 0 0 0 0 0\nend\ntriangles\n")
+
+    def export_mesh_to_smd(self, sb, obj, mesh, has_materials):
+        """Export the mesh to SMD format, with or without materials.
+
+        Args:
+            sb: The string buffer to write to.
+            obj: The object containing the mesh.
+            mesh: The mesh to export.
+            has_materials (bool): True if the mesh has materials.
+        """
+        if has_materials:
+            self.export_mesh_with_materials_to_smd(sb, obj, mesh)
+        else:
+            self.export_mesh_without_materials_to_smd(sb, mesh)
+
+    def export_collision_mesh_to_smd(self, sb, mesh):
         """Export the mesh to SMD format for collision.
 
         Args:
@@ -252,22 +224,9 @@ class MeshExporter:
             mesh: The mesh to export.
         """
         for tri in mesh.loop_triangles:
-            material_name = "Phy"
-            vert_a = mesh.vertices[tri.vertices[0]]
-            vert_b = mesh.vertices[tri.vertices[1]]
-            vert_c = mesh.vertices[tri.vertices[2]]
-            pos_a = vert_a.co
-            pos_b = vert_b.co
-            pos_c = vert_c.co
-            normal_a = vert_a.normal
-            normal_b = vert_b.normal
-            normal_c = vert_c.normal
-            uv_a = mesh.uv_layers.active.data[tri.loops[0]].uv
-            uv_b = mesh.uv_layers.active.data[tri.loops[1]].uv
-            uv_c = mesh.uv_layers.active.data[tri.loops[2]].uv
-            sb.write(f"{material_name}\n0  {pos_a.x:.6f} {pos_a.y:.6f} {pos_a.z:.6f}  {normal_a.x:.6f} {normal_a.y:.6f} {normal_a.z:.6f}  {uv_a.x:.6f} {uv_a.y:.6f} 0\n0  {pos_b.x:.6f} {pos_b.y:.6f} {pos_b.z:.6f}  {normal_b.x:.6f} {normal_b.y:.6f} {normal_b.z:.6f}  {uv_b.x:.6f} {uv_b.y:.6f} 0\n0  {pos_c.x:.6f} {pos_c.y:.6f} {pos_c.z:.6f}  {normal_c.x:.6f} {normal_c.y:.6f} {normal_c.z:.6f}  {uv_c.x:.6f} {uv_c.y:.6f} 0\n")
+            self.write_triangle(sb, "Phy", mesh, tri)
 
-    def exportMeshToSmd_WithMaterials(self, sb, obj, mesh):
+    def export_mesh_with_materials_to_smd(self, sb, obj, mesh):
         """Export the mesh to SMD format with materials.
 
         Args:
@@ -277,26 +236,9 @@ class MeshExporter:
         """
         for tri in mesh.loop_triangles:
             material_name = obj.material_slots[tri.material_index].name
-            vert_a = mesh.vertices[tri.vertices[0]]
-            vert_b = mesh.vertices[tri.vertices[1]]
-            vert_c = mesh.vertices[tri.vertices[2]]
-            pos_a = vert_a.co
-            pos_b = vert_b.co
-            pos_c = vert_c.co
-            normal_a = vert_a.normal
-            normal_b = vert_b.normal
-            normal_c = vert_c.normal
-            if not tri.use_smooth:
-                normal = (pos_b - pos_a).cross(pos_c - pos_a).normalized()
-                normal_a = normal
-                normal_b = normal
-                normal_c = normal
-            uv_a = mesh.uv_layers.active.data[tri.loops[0]].uv
-            uv_b = mesh.uv_layers.active.data[tri.loops[1]].uv
-            uv_c = mesh.uv_layers.active.data[tri.loops[2]].uv
-            sb.write(f"{material_name}\n0  {pos_a.x:.6f} {pos_a.y:.6f} {pos_a.z:.6f}  {normal_a.x:.6f} {normal_a.y:.6f} {normal_a.z:.6f}  {uv_a.x:.6f} {uv_a.y:.6f} 0\n0  {pos_b.x:.6f} {pos_b.y:.6f} {pos_b.z:.6f}  {normal_b.x:.6f} {normal_b.y:.6f} {normal_b.z:.6f}  {uv_b.x:.6f} {uv_b.y:.6f} 0\n0  {pos_c.x:.6f} {pos_c.y:.6f} {pos_c.z:.6f}  {normal_c.x:.6f} {normal_c.y:.6f} {normal_c.z:.6f}  {uv_c.x:.6f} {uv_c.y:.6f} 0\n")
+            self.write_triangle(sb, material_name, mesh, tri)
 
-    def exportMeshToSmd_NoMaterials(self, sb, mesh):
+    def export_mesh_without_materials_to_smd(self, sb, mesh):
         """Export the mesh to SMD format without materials.
 
         Args:
@@ -304,25 +246,35 @@ class MeshExporter:
             mesh: The mesh to export.
         """
         for tri in mesh.loop_triangles:
-            material_name = "None"
-            vert_a = mesh.vertices[tri.vertices[0]]
-            vert_b = mesh.vertices[tri.vertices[1]]
-            vert_c = mesh.vertices[tri.vertices[2]]
-            pos_a = vert_a.co
-            pos_b = vert_b.co
-            pos_c = vert_c.co
-            normal_a = vert_a.normal
-            normal_b = vert_b.normal
-            normal_c = vert_c.normal
-            if not tri.use_smooth:
-                normal = (pos_b - pos_a).cross(pos_c - pos_a).normalized()
-                normal_a = normal
-                normal_b = normal
-                normal_c = normal
-            uv_a = mesh.uv_layers.active.data[tri.loops[0]].uv
-            uv_b = mesh.uv_layers.active.data[tri.loops[1]].uv
-            uv_c = mesh.uv_layers.active.data[tri.loops[2]].uv
-            sb.write(f"{material_name}\n0  {pos_a.x:.6f} {pos_a.y:.6f} {pos_a.z:.6f}  {normal_a.x:.6f} {normal_a.y:.6f} {normal_a.z:.6f}  {uv_a.x:.6f} {uv_a.y:.6f} 0\n0  {pos_b.x:.6f} {pos_b.y:.6f} {pos_b.z:.6f}  {normal_b.x:.6f} {normal_b.y:.6f} {normal_b.z:.6f}  {uv_b.x:.6f} {uv_b.y:.6f} 0\n0  {pos_c.x:.6f} {pos_c.y:.6f} {pos_c.z:.6f}  {normal_c.x:.6f} {normal_c.y:.6f} {normal_c.z:.6f}  {uv_c.x:.6f} {uv_c.y:.6f} 0\n")
+            self.write_triangle(sb, "None", mesh, tri)
+
+    def write_triangle(self, sb, material_name, mesh, tri):
+        """Write a single triangle to the string buffer.
+
+        Args:
+            sb: The string buffer to write to.
+            material_name (str): The name of the material.
+            mesh: The mesh containing the triangle.
+            tri: The triangle to write.
+        """
+        vert_a, vert_b, vert_c = [mesh.vertices[i] for i in tri.vertices]
+        pos_a, pos_b, pos_c = vert_a.co, vert_b.co, vert_c.co
+        normal_a, normal_b, normal_c = vert_a.normal, vert_b.normal, vert_c.normal
+
+        if not tri.use_smooth:
+            normal = (pos_b - pos_a).cross(pos_c - pos_a).normalized()
+            normal_a = normal
+            normal_b = normal
+            normal_c = normal
+
+        uv_a, uv_b, uv_c = [mesh.uv_layers.active.data[loop].uv for loop in tri.loops]
+
+        sb.write(
+            f"{material_name}\n"
+            f"0  {pos_a.x:.6f} {pos_a.y:.6f} {pos_a.z:.6f}  {normal_a.x:.6f} {normal_a.y:.6f} {normal_a.z:.6f}  {uv_a.x:.6f} {uv_a.y:.6f} 0\n"
+            f"0  {pos_b.x:.6f} {pos_b.y:.6f} {pos_b.z:.6f}  {normal_b.x:.6f} {normal_b.y:.6f} {normal_b.z:.6f}  {uv_b.x:.6f} {uv_b.y:.6f} 0\n"
+            f"0  {pos_c.x:.6f} {pos_c.y:.6f} {pos_c.z:.6f}  {normal_c.x:.6f} {normal_c.y:.6f} {normal_c.z:.6f}  {uv_c.x:.6f} {uv_c.y:.6f} 0\n"
+        )
 
 class AutoMDLOperator(bpy.types.Operator):
     bl_idname = "wm.automdl"
@@ -371,9 +323,9 @@ class AutoMDLOperator(bpy.types.Operator):
             True if the game path is set successfully.
         """
         if game_select_method_is_dropdown:
-            setGamePath(self, context, context.scene.game_select)
+            setGamePath(context.scene.game_select)
         else:
-            setGamePath(self, context, gameManualTextGameinfoPath)
+            setGamePath(gameManualTextGameinfoPath)
         return True
 
     def check_blend_file(self, blend_path):
@@ -640,7 +592,6 @@ class AutoMDLPanel(bpy.types.Panel):
         row = layout.row()
         row.prop(context.scene, "staticprop", text="Static Prop")
 
-
 # for cdmaterials list
 class CdMaterialsPropGroup(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty()
@@ -721,7 +672,7 @@ def set_default_values():
         if game_select_method_is_dropdown:
             select_default_game_path()
         else:
-            onGameManualTextInputChanged(None, bpy.context)
+            on_game_manual_text_input_changed(None, bpy.context)
 
         print("Default values set successfully")
     except Exception as e:
@@ -803,13 +754,13 @@ def setup_steam_path():
     if steam_path is not None:
         game_select_method_is_dropdown = True
         steam_path = os.path.join(steam_path, "").replace("\\", "/")
-        games_paths_list = getGamesList()
+        games_paths_list = get_games_list()
         defineGameSelectDropdown(None, bpy.context)
     else:
         game_select_method_is_dropdown = False
         steam_path = None
         bpy.types.Scene.studiomdl_manual_input = bpy.props.StringProperty(
-            name="", default="", description="Path to the studiomdl.exe file", update=onGameManualTextInputChanged
+            name="", default="", description="Path to the studiomdl.exe file", update=on_game_manual_text_input_changed
         )
 
 def initialize_cdmaterials_list():
@@ -846,7 +797,6 @@ def select_default_game_path():
     
     # Trigger update
     onGameDropdownChanged(None, bpy.context)
-
 
 # This here is an efficient alogrithm to count the number of loose parts inside a mesh
 # i would implement it myself but i haven't done much graph stuff,
@@ -921,6 +871,47 @@ def CountIslands2(obj):
 
 #Todo: All this stuff below this line isn't in a class. Should it be?
 
+def switch_to_object_mode():
+    """Switch to object mode if not already in it and return the previous mode."""
+    if bpy.context.mode != 'OBJECT':
+        context_mode_snapshot = bpy.context.active_object.mode
+        bpy.ops.object.mode_set(mode='OBJECT')
+        return context_mode_snapshot
+    return "null"
+
+def restore_mode(context_mode_snapshot):
+    """Restore the mode to the previously saved mode."""
+    if context_mode_snapshot != "null":
+        bpy.ops.object.mode_set(mode=context_mode_snapshot)
+
+def is_float(value):
+  if value is None:
+      return False
+  try:
+      float(value)
+      return True
+  except:
+      return False
+
+def create_folder(fullpath):
+    """Create a folder if it does not already exist.
+
+    Args:
+        fullpath (str): The full path to the folder.
+    """
+    try:
+        os.makedirs(fullpath, exist_ok=True)
+    except FileExistsError:
+        pass
+
+def checkVisMeshHasMesh(context):
+    vis_mesh_obj = context.scene.vis_mesh
+    return (vis_mesh_obj and vis_mesh_obj.type == 'MESH' and vis_mesh_obj.name in bpy.data.objects) == True
+
+def checkPhyMeshHasMesh(context):
+    phy_mesh_obj = context.scene.phy_mesh
+    return (phy_mesh_obj and phy_mesh_obj.type == 'MESH' and phy_mesh_obj.name in bpy.data.objects) == True
+
 def getSteamInstallationPath():
     """
     Get the installation path of the Steam client on the user's system.
@@ -951,26 +942,68 @@ def getSteamInstallationPath():
     
     return None
 
+def setGamePath(new_game_path_value):
+    """
+    Sets the game path and the path to the studiomdl.exe file.
+    
+    This function updates the global `game_path` and `studiomdl_path` variables with the provided `new_game_path_value`. The `studiomdl_path` is constructed by joining the directory of the `game_path` with the "bin" subdirectory and the "studiomdl.exe" filename.
+    
+    Args:
+        self (object): The current object instance.
+        context (bpy.types.Context): The Blender context object.
+        new_game_path_value (str): The new game path value to set.
+    
+    Returns:
+        None
+    """
+    global game_path
+    global studiomdl_path
+    game_path = new_game_path_value
+    studiomdl_path = Path(game_path).parent / "bin" / "studiomdl.exe"
 
-def is_float(value):
-  if value is None:
-      return False
-  try:
-      float(value)
-      return True
-  except:
-      return False
+def path_exists(path):
+    """Check if the given path exists."""
+    return os.path.exists(path)
 
- 
-def checkVisMeshHasMesh(context):
-    vis_mesh_obj = context.scene.vis_mesh
-    return (vis_mesh_obj and vis_mesh_obj.type == 'MESH' and vis_mesh_obj.name in bpy.data.objects) == True
+def find_file_in_subdirectories(base_path, file_name):
+    """Find the first subdirectory containing the specified file."""
+    for subdir in base_path.iterdir():
+        if subdir.is_dir() and path_exists(subdir / file_name):
+            return str(subdir)
+    return None
 
+def validate_studiomdl_path(input_path):
+    """Check if the specified path contains studiomdl.exe."""
+    return path_exists(input_path / "studiomdl.exe")
 
-def checkPhyMeshHasMesh(context):
-    phy_mesh_obj = context.scene.phy_mesh
-    return (phy_mesh_obj and phy_mesh_obj.type == 'MESH' and phy_mesh_obj.name in bpy.data.objects) == True
+def validate_gameinfo_path(base_path):
+    """Check if the base path contains gameinfo.txt in any subdirectory."""
+    return find_file_in_subdirectories(base_path, "gameinfo.txt")
 
+def get_games_list():
+    """
+    Get a list of all Source Engine games installed on the user's system.
+    
+    This function searches the Steam "common" directory for any subdirectories that contain a "bin" folder with a "studiomdl.exe" file,
+    which indicates a Source Engine game is installed. It then iterates through those subdirectories to find the first one that contains a
+    "gameinfo.txt" file, which is returned as the game path.
+    
+    Returns:
+        list: A list of file paths to the directories containing Source Engine games.
+    """
+    global steam_path
+    common = Path(steam_path) / "steamapps/common"
+    
+    subdirectories = [x for x in common.iterdir() if x.is_dir()]
+    games_list = []
+
+    for subdir in subdirectories:
+        if path_exists(subdir / "bin" / "studiomdl.exe"):
+            gameinfo_path = validate_gameinfo_path(subdir)
+            if gameinfo_path:
+                games_list.append(gameinfo_path)
+    
+    return games_list
 
 def to_models_relative_path(file_path):
     MODELS_FOLDER_NAME = "models"
@@ -1023,17 +1056,6 @@ def create_material_folder_and_files(context, root, entry):
     if should_create_vmt_files(context):
         create_vmt_files(context, fullpath, entry)
 
-def create_folder(fullpath):
-    """Create a folder if it does not already exist.
-
-    Args:
-        fullpath (str): The full path to the folder.
-    """
-    try:
-        os.makedirs(fullpath, exist_ok=True)
-    except FileExistsError:
-        pass
-
 def should_create_vmt_files(context):
     """Check if VMT files should be created based on user preferences.
 
@@ -1069,7 +1091,6 @@ def create_vmt_file(vmt_path, entry):
     with open(vmt_path, "w") as file:
         vmt_basetexture = os.path.join(entry, "_PLACEHOLDER_").replace("\\", "/")
         file.write(f"VertexLitGeneric\n{{\n\t$basetexture \"{vmt_basetexture}\"\n}}")
-
 
 if __name__ == "__main__":
     register()
