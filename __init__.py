@@ -21,6 +21,8 @@ from bl_ui.generic_ui_list import draw_ui_list
 import threading
 from io import StringIO
 from .qc_writer import QCWriter
+from .mesh_exporter import MeshExporter
+from .material_manager import MaterialManager
 
 game_select_method_is_dropdown = None
 temp_path = bpy.app.tempdir
@@ -106,129 +108,6 @@ def on_game_manual_text_input_changed(context):
     global gameManualTextGameinfoPath
     gameManualTextGameinfoPath = gameinfo_path
 
-class MeshExporter:
-    def export_meshes(self, context, qc_vismesh, qc_phymesh, has_collision):
-        """Export the visual and collision meshes to SMD format.
-
-        Args:
-            context: The context from Blender.
-            qc_vismesh (str): The path to the visual mesh.
-            qc_phymesh (str): The path to the physical mesh.
-            has_collision (bool): True if a collision mesh is present.
-        """
-        self.export_object_to_smd(context.scene.vis_mesh, os.path.join(temp_path, qc_vismesh), False)
-        if has_collision:
-            self.export_object_to_smd(context.scene.phy_mesh, os.path.join(temp_path, qc_phymesh), True)
-
-    def export_object_to_smd(self, obj, path, is_collision_smd):
-        """Export the object to SMD format.
-
-        Args:
-            obj: The object to export.
-            path: The path to save the SMD file.
-            is_collision_smd (bool): True if the SMD is for collision.
-        """
-        context_mode_snapshot = switch_to_object_mode()
-
-        depsgraph = bpy.context.evaluated_depsgraph_get()
-        object_eval = obj.evaluated_get(depsgraph)
-        mesh = object_eval.to_mesh()
-        mesh.calc_loop_triangles()
-        mesh.transform(obj.matrix_world)
-
-        with open(path + ".smd", "w") as file:
-            self.write_smd_header(file)
-            sb = StringIO()
-            has_materials = len(obj.material_slots) > 0
-
-            if is_collision_smd:
-                self.export_collision_mesh_to_smd(sb, mesh)
-            else:
-                self.export_mesh_to_smd(sb, obj, mesh, has_materials)
-            
-            file.write(sb.getvalue())
-            file.write("end\n")
-
-        restore_mode(context_mode_snapshot)
-
-    def write_smd_header(self, file):
-        """Write the header for the SMD file."""
-        file.write("version 1\nnodes\n0 \"root\" -1\nend\nskeleton\ntime 0\n0 0 0 0 0 0 0\nend\ntriangles\n")
-
-    def export_mesh_to_smd(self, sb, obj, mesh, has_materials):
-        """Export the mesh to SMD format, with or without materials.
-
-        Args:
-            sb: The string buffer to write to.
-            obj: The object containing the mesh.
-            mesh: The mesh to export.
-            has_materials (bool): True if the mesh has materials.
-        """
-        if has_materials:
-            self.export_mesh_with_materials_to_smd(sb, obj, mesh)
-        else:
-            self.export_mesh_without_materials_to_smd(sb, mesh)
-
-    def export_collision_mesh_to_smd(self, sb, mesh):
-        """Export the mesh to SMD format for collision.
-
-        Args:
-            sb: The string buffer to write to.
-            mesh: The mesh to export.
-        """
-        for tri in mesh.loop_triangles:
-            self.write_triangle(sb, "Phy", mesh, tri)
-
-    def export_mesh_with_materials_to_smd(self, sb, obj, mesh):
-        """Export the mesh to SMD format with materials.
-
-        Args:
-            sb: The string buffer to write to.
-            obj: The object containing the mesh.
-            mesh: The mesh to export.
-        """
-        for tri in mesh.loop_triangles:
-            material_name = obj.material_slots[tri.material_index].name
-            self.write_triangle(sb, material_name, mesh, tri)
-
-    def export_mesh_without_materials_to_smd(self, sb, mesh):
-        """Export the mesh to SMD format without materials.
-
-        Args:
-            sb: The string buffer to write to.
-            mesh: The mesh to export.
-        """
-        for tri in mesh.loop_triangles:
-            self.write_triangle(sb, "None", mesh, tri)
-
-    def write_triangle(self, sb, material_name, mesh, tri):
-        """Write a single triangle to the string buffer.
-
-        Args:
-            sb: The string buffer to write to.
-            material_name (str): The name of the material.
-            mesh: The mesh containing the triangle.
-            tri: The triangle to write.
-        """
-        vert_a, vert_b, vert_c = [mesh.vertices[i] for i in tri.vertices]
-        pos_a, pos_b, pos_c = vert_a.co, vert_b.co, vert_c.co
-        normal_a, normal_b, normal_c = vert_a.normal, vert_b.normal, vert_c.normal
-
-        if not tri.use_smooth:
-            normal = (pos_b - pos_a).cross(pos_c - pos_a).normalized()
-            normal_a = normal
-            normal_b = normal
-            normal_c = normal
-
-        uv_a, uv_b, uv_c = [mesh.uv_layers.active.data[loop].uv for loop in tri.loops]
-
-        sb.write(
-            f"{material_name}\n"
-            f"0  {pos_a.x:.6f} {pos_a.y:.6f} {pos_a.z:.6f}  {normal_a.x:.6f} {normal_a.y:.6f} {normal_a.z:.6f}  {uv_a.x:.6f} {uv_a.y:.6f} 0\n"
-            f"0  {pos_b.x:.6f} {pos_b.y:.6f} {pos_b.z:.6f}  {normal_b.x:.6f} {normal_b.y:.6f} {normal_b.z:.6f}  {uv_b.x:.6f} {uv_b.y:.6f} 0\n"
-            f"0  {pos_c.x:.6f} {pos_c.y:.6f} {pos_c.z:.6f}  {normal_c.x:.6f} {normal_c.y:.6f} {normal_c.z:.6f}  {uv_c.x:.6f} {uv_c.y:.6f} 0\n"
-        )
-
 class AutoMDLOperator(bpy.types.Operator):
     bl_idname = "wm.automdl"
     bl_label = "Update MDL"
@@ -254,7 +133,10 @@ class AutoMDLOperator(bpy.types.Operator):
             self.report({'ERROR'}, "Please save the project inside a models folder")
             return {'CANCELLED'}
 
-        MeshExporter().export_meshes(context, qc_vismesh, qc_phymesh, has_collision)
+        mesh_exporter = initialize_mesh_exporter_from_context(context, bpy.app.tempdir, qc_vismesh, qc_phymesh)
+        context_mode_snapshot = switch_to_object_mode()
+        mesh_exporter.export_meshes(has_collision)
+        restore_mode(context_mode_snapshot)
 
         qc_cdmaterials_list, has_materials = self.setup_qc_materials(context, qc_modelpath)
         qc_writer = initialize_qc_writer_from_context(context, qc_path, qc_modelpath, qc_vismesh, qc_phymesh, qc_cdmaterials_list, has_collision, has_materials)
@@ -262,20 +144,15 @@ class AutoMDLOperator(bpy.types.Operator):
 
         self.compile_qc(qc_path)
         self.move_compiled_files(qc_modelpath, blend_path)
-        self.create_material_folders(context, blend_path, qc_cdmaterials_list, has_materials)
+        
+        material_manager = MaterialManager(context)
+        material_manager.create_material_folders(blend_path, qc_cdmaterials_list, has_materials)
 
         self.report({'INFO'}, f"If compile was successful, output should be in \"{os.path.dirname(blend_path)}\"")
-        return {'FINISHED'}    
+        return {'FINISHED'}
 
     def set_game_path(self, context):
-        """Set the game path based on user selection.
-
-        Args:
-            context: The context from Blender.
-
-        Returns:
-            True if the game path is set successfully.
-        """
+        """Set the game path based on user selection."""
         if game_select_method_is_dropdown:
             setGamePath(context.scene.game_select)
         else:
@@ -283,31 +160,14 @@ class AutoMDLOperator(bpy.types.Operator):
         return True
 
     def check_blend_file(self, blend_path):
-        """Check if the blend file is saved in the correct location.
-
-        Args:
-            blend_path: The path to the blend file.
-
-        Returns:
-            True if the blend file is valid, False otherwise.
-        """
+        """Check if the blend file is saved in the correct location."""
         if not blend_path:
             self.report({'ERROR'}, "Please save the project inside a models folder")
             return False
         return True
 
     def check_meshes(self, context):
-        """Check the validity of the meshes and whether collision meshes are present.
-
-        Args:
-            context: The context from Blender.
-
-        Returns:
-            Tuple containing:
-                has_collision (bool): True if a collision mesh is present.
-                vis_mesh_valid (bool): True if the visual mesh is valid.
-                phy_mesh_valid (bool): True if the physical mesh is valid.
-        """
+        """Check the validity of the meshes and whether collision meshes are present."""
         has_collision = False
         phy_mesh_obj = context.scene.phy_mesh
         if phy_mesh_obj and phy_mesh_obj.name in bpy.data.objects:
@@ -325,14 +185,7 @@ class AutoMDLOperator(bpy.types.Operator):
         return has_collision, vis_mesh_valid, phy_mesh_valid
 
     def validate_meshes(self, context):
-        """Ensure that selected meshes are not deleted.
-
-        Args:
-            context: The context from Blender.
-
-        Returns:
-            True if the meshes are valid, False otherwise.
-        """
+        """Ensure that selected meshes are not deleted."""
         if context.scene.vis_mesh and context.scene.vis_mesh.name not in bpy.context.scene.objects:
             self.report({'ERROR'}, "Visual mesh points to a deleted object!")
             return False
@@ -344,19 +197,7 @@ class AutoMDLOperator(bpy.types.Operator):
         return True
 
     def prepare_qc_paths(self, blend_path):
-        """Prepare necessary paths for the QC file and model.
-
-        Args:
-            blend_path: The path to the blender file.
-
-        Returns:
-            Tuple containing:
-                qc_modelpath (str): The path to the QC model.
-                qc_vismesh (str): The path to the visual mesh.
-                qc_phymesh (str): The path to the physical mesh.
-                qc_path (str): The path to the QC file.
-        """
-        mesh_ext = "smd"
+        """Prepare necessary paths for the QC file and model."""
         qc_path = os.path.join(temp_path, "qc.qc")
 
         qc_modelpath = to_models_relative_path(blend_path)
@@ -369,17 +210,7 @@ class AutoMDLOperator(bpy.types.Operator):
         return qc_modelpath, qc_vismesh, qc_phymesh, qc_path
 
     def setup_qc_materials(self, context, qc_modelpath):
-        """Set up the list of materials to be used in the QC file.
-
-        Args:
-            context: The context from Blender.
-            qc_modelpath (str): The path to the QC model.
-
-        Returns:
-            Tuple containing:
-                qc_cdmaterials_list (list): List of CD materials.
-                has_materials (bool): True if the visual mesh has materials.
-        """
+        """Set up the list of materials to be used in the QC file."""
         qc_cdmaterials_list = []
         has_materials = context.scene.vis_mesh.material_slots
 
@@ -395,21 +226,12 @@ class AutoMDLOperator(bpy.types.Operator):
         return qc_cdmaterials_list, has_materials
 
     def compile_qc(self, qc_path):
-        """Compile the QC file using the external studiomdl tool.
-
-        Args:
-            qc_path (str): The path to the QC file.
-        """
+        """Compile the QC file using the external studiomdl tool."""
         studiomdl_args = [studiomdl_path, "-game", game_path, "-nop4", "-quiet", "-nowarnings", "-nox360", qc_path]
         subprocess.run(studiomdl_args)
 
     def move_compiled_files(self, qc_modelpath, blend_path):
-        """Move the compiled files to the appropriate directory.
-
-        Args:
-            qc_modelpath (str): The path to the QC model.
-            blend_path (str): The path to the blend file.
-        """
+        """Move the compiled files to the appropriate directory."""
         compile_path = os.path.join(game_path, "models", os.path.dirname(qc_modelpath))
         move_path = os.path.dirname(blend_path)
         compiled_model_name = Path(os.path.basename(qc_modelpath)).stem
@@ -423,21 +245,6 @@ class AutoMDLOperator(bpy.types.Operator):
 
         if os.path.isdir(compile_path) and not os.listdir(compile_path):
             os.rmdir(compile_path)
-
-    def create_material_folders(self, context, blend_path, qc_cdmaterials_list, has_materials):
-        """Handle the creation of material folders and VMT files if necessary.
-
-        Args:
-            context: The context from Blender.
-            blend_path (str): The path to the blend file.
-            qc_cdmaterials_list (list): List of CD materials.
-            has_materials (bool): True if the visual mesh has materials.
-        """
-        make_folders = bpy.context.preferences.addons[__package__].preferences.do_make_folders_for_cdmaterials
-        if has_materials and make_folders:
-            root = get_project_root(blend_path)
-            for entry in qc_cdmaterials_list:
-                create_material_folder_and_files(context, root, entry)
 
 class AutoMDLPanel(bpy.types.Panel):
     bl_label = "AutoMDL"
@@ -577,6 +384,8 @@ classes = [
     AutoMDLOperator,
     AutoMDLPanel,
     QCWriter,
+    MeshExporter,
+    MaterialManager,
     CdMaterialsPropGroup,
     AddonPrefs
 ]
@@ -753,6 +562,36 @@ def select_default_game_path():
     # Trigger update
     onGameDropdownChanged(None, bpy.context)
 
+
+#-----------------------------------------------
+# Context Switching
+#-----------------------------------------------
+def switch_to_object_mode():
+    """Switch to object mode if not already in it and return the previous mode."""
+    if bpy.context.mode != 'OBJECT':
+        context_mode_snapshot = bpy.context.active_object.mode
+        bpy.ops.object.mode_set(mode='OBJECT')
+        return context_mode_snapshot
+    return "null"
+
+def restore_mode(context_mode_snapshot):
+    """Restore the mode to the previously saved mode."""
+    if context_mode_snapshot != "null":
+        bpy.ops.object.mode_set(mode=context_mode_snapshot)
+#-----------------------------------------------
+
+def is_float(value):
+  if value is None:
+      return False
+  try:
+      float(value)
+      return True
+  except:
+      return False
+
+#-----------------------------------------------
+# Mesh Validation
+#-----------------------------------------------
 # This here is an efficient alogrithm to count the number of loose parts inside a mesh
 # i would implement it myself but i haven't done much graph stuff,
 # and speed is really needed right now, and first implementation would be slow. 
@@ -824,40 +663,6 @@ def CountIslands2(obj):
     
     return len(lparts)
 
-#Todo: All this stuff below this line isn't in a class. Should it be?
-def switch_to_object_mode():
-    """Switch to object mode if not already in it and return the previous mode."""
-    if bpy.context.mode != 'OBJECT':
-        context_mode_snapshot = bpy.context.active_object.mode
-        bpy.ops.object.mode_set(mode='OBJECT')
-        return context_mode_snapshot
-    return "null"
-
-def restore_mode(context_mode_snapshot):
-    """Restore the mode to the previously saved mode."""
-    if context_mode_snapshot != "null":
-        bpy.ops.object.mode_set(mode=context_mode_snapshot)
-
-def is_float(value):
-  if value is None:
-      return False
-  try:
-      float(value)
-      return True
-  except:
-      return False
-
-def create_folder(fullpath):
-    """Create a folder if it does not already exist.
-
-    Args:
-        fullpath (str): The full path to the folder.
-    """
-    try:
-        os.makedirs(fullpath, exist_ok=True)
-    except FileExistsError:
-        pass
-
 def checkVisMeshHasMesh(context):
     vis_mesh_obj = context.scene.vis_mesh
     return (vis_mesh_obj and vis_mesh_obj.type == 'MESH' and vis_mesh_obj.name in bpy.data.objects) == True
@@ -865,6 +670,7 @@ def checkVisMeshHasMesh(context):
 def checkPhyMeshHasMesh(context):
     phy_mesh_obj = context.scene.phy_mesh
     return (phy_mesh_obj and phy_mesh_obj.type == 'MESH' and phy_mesh_obj.name in bpy.data.objects) == True
+#-----------------------------------------------
 
 def getSteamInstallationPath():
     """
@@ -919,6 +725,9 @@ def path_exists(path):
     """Check if the given path exists."""
     return os.path.exists(path)
 
+#-----------------------------------------------
+# File validation
+#-----------------------------------------------
 def find_file_in_subdirectories(base_path, file_name):
     """Find the first subdirectory containing the specified file."""
     for subdir in base_path.iterdir():
@@ -971,81 +780,11 @@ def to_models_relative_path(file_path):
         return None
 
     return os.path.splitext(os.path.relpath(file_path, root))[0].replace("\\", "/")
+#-----------------------------------------------
 
-def get_models_path(file_path):
-    MODELS_FOLDER_NAME = "models"
-    
-    # See if we can find a models folder up the chain
-    index = file_path.rfind(MODELS_FOLDER_NAME)
-
-    if index != -1:
-        root = file_path[:index + len(MODELS_FOLDER_NAME)]
-        return root
-    
-    return None 
-  
-def get_project_root(blend_path):
-    """Get the root directory of the project, two levels up from the models path.
-
-    Args:
-        blend_path (str): The path to the blend file.
-
-    Returns:
-        str: The root directory of the project.
-    """
-    models_path = get_models_path(blend_path)
-    return os.path.dirname(os.path.dirname(models_path))
-
-def create_material_folder_and_files(context, root, entry):
-    """Create material folder and VMT files if necessary.
-
-    Args:
-        context: The context from Blender.
-        root (str): The root directory of the project.
-        entry (str): The entry path for the materials.
-    """
-    fullpath = Path(os.path.join(root, "materials", entry).replace("\\", "/"))
-    print(f"root path = {root}. full path = {fullpath}")
-    create_folder(fullpath)
-    if should_create_vmt_files(context):
-        create_vmt_files(context, fullpath, entry)
-
-def should_create_vmt_files(context):
-    """Check if VMT files should be created based on user preferences.
-
-    Args:
-        context: The context from Blender.
-
-    Returns:
-        bool: True if VMT files should be created, False otherwise.
-    """
-    make_vmts = bpy.context.preferences.addons[__package__].preferences.do_make_vmts
-    return make_vmts and context.scene.cdmaterials_type == '0'
-
-def create_vmt_files(context, fullpath, entry):
-    """Create VMT files in the specified folder if 'Same as MDL' option is selected.
-
-    Args:
-        context: The context from Blender.
-        fullpath (str): The full path to the folder.
-        entry (str): The entry path for the materials.
-    """
-    for slot in context.scene.vis_mesh.material_slots:
-        vmt_path = os.path.join(fullpath, slot.name + '.vmt')
-        if not os.path.exists(vmt_path):
-            create_vmt_file(vmt_path, entry)
-
-def create_vmt_file(vmt_path, entry):
-    """Create a single VMT file with the specified path and entry.
-
-    Args:
-        vmt_path (str): The path to the VMT file.
-        entry (str): The entry path for the materials.
-    """
-    with open(vmt_path, "w") as file:
-        vmt_basetexture = os.path.join(entry, "_PLACEHOLDER_").replace("\\", "/")
-        file.write(f"VertexLitGeneric\n{{\n\t$basetexture \"{vmt_basetexture}\"\n}}")
-
+#-----------------------------------------------
+# Initialization of things.
+#-----------------------------------------------
 def initialize_qc_writer_from_context(context, qc_path, qc_modelpath, qc_vismesh, qc_phymesh, qc_cdmaterials_list, has_collision, has_materials):
     """
     Initialize a QCWriter instance from the provided Blender context and parameters.
@@ -1088,5 +827,32 @@ def initialize_qc_writer_from_context(context, qc_path, qc_modelpath, qc_vismesh
     qc_writer = QCWriter(paths, attributes, flags)
     return qc_writer
 
+def initialize_mesh_exporter_from_context(context, temp_path, qc_vismesh, qc_phymesh):
+    """
+    Initialize a MeshExporter instance from the provided Blender context and parameters.
+    
+    Args:
+        context (bpy.types.Context): The Blender context.
+        temp_path (str): The temporary path for the exported files.
+        qc_vismesh (str): The path to the visual mesh file.
+        qc_phymesh (str): The path to the physical mesh file.
+    
+    Returns:
+        MeshExporter: The initialized MeshExporter instance.
+    """
+    paths = {
+        'temp_path': temp_path,
+        'qc_vismesh': qc_vismesh,
+        'qc_phymesh': qc_phymesh
+    }
+
+    context_objs = {
+        'vis_mesh': context.scene.vis_mesh,
+        'phy_mesh': context.scene.phy_mesh
+    }
+
+    mesh_exporter = MeshExporter(paths, context_objs)
+    return mesh_exporter
+#-----------------------------------------------
 if __name__ == "__main__":
     register()
