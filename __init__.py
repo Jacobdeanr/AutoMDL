@@ -383,36 +383,45 @@ class AutoMDLOperator(bpy.types.Operator):
         
         
         # create appropriate folders in materials
-        make_folders = bpy.context.preferences.addons[__package__].preferences.do_make_folders_for_cdmaterials
-        if has_materials and make_folders:
-            for i in range(len(qc_cdmaterials_list)):
-                entry = qc_cdmaterials_list[i]
-                root = os.path.dirname(get_models_path(blend_path))
-                fullpath = Path(os.path.join(root, "materials", entry).replace("\\", "/"))
-                try:
-                    # make folder
-                    os.mkdir(fullpath)
-                except:
-                    pass
-                    
-                # only when "Same as MDL" option is selected:
-                # for each material in the visual mesh, make a VMT inside the folder
-                make_vmts = bpy.context.preferences.addons[__package__].preferences.do_make_vmts
-                if make_vmts:
-                    if context.scene.cdmaterials_type == '0': # if "Same as MDL" is selected
-                        # here qc_cdmaterials_list will contain only 1 item so we're good
-                        for slot in context.scene.vis_mesh.material_slots:
-                            vmt_path = os.path.join(fullpath, slot.name + '.vmt')
-                            
-                            # don't override vmt if it already exists
-                            if os.path.exists(vmt_path) is False:
-                                with open(vmt_path, "w") as file:
-                                    vmt_basetexture = os.path.join(entry, "_PLACEHOLDER_").replace("\\", "/")
-                                    file.write(f"VertexLitGeneric\n{{\n\t$basetexture \"{vmt_basetexture}\"\n}}")
+        self.create_material_folders(context, blend_path, qc_cdmaterials_list, has_materials)
         
         
         self.report({'INFO'}, f"If compile was successful, output should be in \"{os.path.join(move_path, '')}\"")
         return {'FINISHED'}
+    
+    def create_material_folders(self, context, blend_path, qc_cdmaterials_list, has_materials):
+        """Create appropriate folders in materials."""
+        make_folders = bpy.context.preferences.addons[__package__].preferences.do_make_folders_for_cdmaterials
+        if has_materials and make_folders:
+            for entry in qc_cdmaterials_list:
+                #Hack. Why oh why am I doing it this way?
+                root = os.path.dirname(os.path.dirname(get_models_path(blend_path)))
+                fullpath = Path(os.path.join(root, "materials", entry).replace("\\", "/"))
+                print(f"root path = {root}. full path = {fullpath}")
+                self.create_folder_if_not_exists(fullpath)
+                self.create_vmt_files(context, fullpath, entry)
+
+    def create_folder_if_not_exists(self, fullpath):
+        """Create folder if it does not exist."""
+        try:
+            os.makedirs(fullpath, exist_ok=True)
+        except FileExistsError:
+            pass
+
+    def create_vmt_files(self, context, fullpath, entry):
+        """Create VMT files in the specified folder if 'Same as MDL' option is selected."""
+        make_vmts = bpy.context.preferences.addons[__package__].preferences.do_make_vmts
+        if make_vmts and context.scene.cdmaterials_type == '0':  # if "Same as MDL" is selected
+            for slot in context.scene.vis_mesh.material_slots:
+                vmt_path = os.path.join(fullpath, slot.name + '.vmt')
+                if not os.path.exists(vmt_path):
+                    self.create_vmt_file(vmt_path, entry)
+
+    def create_vmt_file(self, vmt_path, entry):
+        """Create a single VMT file with the specified path and entry."""
+        with open(vmt_path, "w") as file:
+            vmt_basetexture = os.path.join(entry, "_PLACEHOLDER_").replace("\\", "/")
+            file.write(f"VertexLitGeneric\n{{\n\t$basetexture \"{vmt_basetexture}\"\n}}")
     
     
     def exportObjectToSmd(self, obj, path, is_collision_smd):
@@ -954,7 +963,6 @@ def CountIslands( obj ):
             found = False
     return n
 
-
 def CountIslands2(obj):
     mesh = obj.data
     paths={v.index:set() for v in mesh.vertices}
@@ -979,7 +987,6 @@ def CountIslands2(obj):
         lparts.append(lpart)
     
     return len(lparts)
-
 
 def is_float(value):
   if value is None:
