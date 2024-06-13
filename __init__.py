@@ -20,6 +20,7 @@ import winreg
 from bl_ui.generic_ui_list import draw_ui_list
 import threading
 from io import StringIO
+from .qc_writer import QCWriter
 
 game_select_method_is_dropdown = None
 temp_path = bpy.app.tempdir
@@ -104,54 +105,6 @@ def on_game_manual_text_input_changed(context):
 
     global gameManualTextGameinfoPath
     gameManualTextGameinfoPath = gameinfo_path
-
-class QCWriter:
-    def write_qc_file(self, context, qc_path, qc_modelpath, qc_vismesh, qc_phymesh, qc_cdmaterials_list, has_collision, has_materials):
-        """Write the QC file with all necessary information.
-
-        Args:
-            context: The context from Blender.
-            qc_path (str): The path to the QC file.
-            qc_modelpath (str): The path to the QC model.
-            qc_vismesh (str): The path to the visual mesh.
-            qc_phymesh (str): The path to the physical mesh.
-            qc_cdmaterials_list (list): List of CD materials.
-            has_collision (bool): True if a collision mesh is present.
-            has_materials (bool): True if the visual mesh has materials.
-        """
-        qc_staticprop = context.scene.staticprop
-        qc_mass = context.scene.mass_text_input if not qc_staticprop else 1
-        qc_surfaceprop = context.scene.surfaceprop
-        qc_concave = has_collision and CountIslands(context.scene.phy_mesh) > 1
-        qc_mostlyopaque = context.scene.mostlyopaque
-        qc_maxconvexpieces = CountIslands(context.scene.phy_mesh) if has_collision else 0
-
-        with open(qc_path, "w") as file:
-            file.write(f"$modelname \"{qc_modelpath}.mdl\"\n\n")
-            file.write(f"$bodygroup \"Body\"\n{{\n\tstudio \"{qc_vismesh}.smd\"\n}}\n")
-
-            if qc_staticprop:
-                file.write("\n$staticprop\n")
-            
-            if qc_mostlyopaque:
-                file.write("\n$mostlyopaque\n")
-
-            file.write(f"\n$surfaceprop \"{qc_surfaceprop}\"\n\n")
-            file.write("$contents \"solid\"\n\n")
-
-            for material_path in qc_cdmaterials_list:
-                file.write(f"$cdmaterials \"{material_path}\"\n")
-
-            if not has_materials:
-                file.write(f"$cdmaterials \"\"\n")
-
-            file.write(f"\n$sequence \"idle\" {{\n\t\"{qc_vismesh}.smd\"\n\tfps 30\n\tfadein 0.2\n\tfadeout 0.2\n\tloop\n}}\n")
-
-            if has_collision:
-                file.write(f"\n$collisionmodel \"{qc_phymesh}.smd\" {{")
-                if qc_concave:
-                    file.write(f"\n\t$concave\n\t$maxconvexpieces {qc_maxconvexpieces}")
-                file.write(f"\n\t$mass {qc_mass}\n\t$inertia 1\n\t$damping 0\n\t$rotdamping 0\n\t$rootbone \" \"\n}}\n")
 
 class MeshExporter:
     def export_meshes(self, context, qc_vismesh, qc_phymesh, has_collision):
@@ -304,14 +257,15 @@ class AutoMDLOperator(bpy.types.Operator):
         MeshExporter().export_meshes(context, qc_vismesh, qc_phymesh, has_collision)
 
         qc_cdmaterials_list, has_materials = self.setup_qc_materials(context, qc_modelpath)
-        QCWriter().write_qc_file(context, qc_path, qc_modelpath, qc_vismesh, qc_phymesh, qc_cdmaterials_list, has_collision, has_materials)
+        qc_writer = initialize_qc_writer_from_context(context, qc_path, qc_modelpath, qc_vismesh, qc_phymesh, qc_cdmaterials_list, has_collision, has_materials)
+        qc_writer.write_qc_file()
 
         self.compile_qc(qc_path)
         self.move_compiled_files(qc_modelpath, blend_path)
         self.create_material_folders(context, blend_path, qc_cdmaterials_list, has_materials)
 
         self.report({'INFO'}, f"If compile was successful, output should be in \"{os.path.dirname(blend_path)}\"")
-        return {'FINISHED'}
+        return {'FINISHED'}    
 
     def set_game_path(self, context):
         """Set the game path based on user selection.
@@ -622,6 +576,7 @@ class AddonPrefs(bpy.types.AddonPreferences):
 classes = [
     AutoMDLOperator,
     AutoMDLPanel,
+    QCWriter,
     CdMaterialsPropGroup,
     AddonPrefs
 ]
@@ -870,7 +825,6 @@ def CountIslands2(obj):
     return len(lparts)
 
 #Todo: All this stuff below this line isn't in a class. Should it be?
-
 def switch_to_object_mode():
     """Switch to object mode if not already in it and return the previous mode."""
     if bpy.context.mode != 'OBJECT':
@@ -1091,6 +1045,48 @@ def create_vmt_file(vmt_path, entry):
     with open(vmt_path, "w") as file:
         vmt_basetexture = os.path.join(entry, "_PLACEHOLDER_").replace("\\", "/")
         file.write(f"VertexLitGeneric\n{{\n\t$basetexture \"{vmt_basetexture}\"\n}}")
+
+def initialize_qc_writer_from_context(context, qc_path, qc_modelpath, qc_vismesh, qc_phymesh, qc_cdmaterials_list, has_collision, has_materials):
+    """
+    Initialize a QCWriter instance from the provided Blender context and parameters.
+    
+    Args:
+        context (bpy.types.Context): The Blender context.
+        qc_path (str): The path to the QC file.
+        qc_modelpath (str): The path to the model file.
+        qc_vismesh (str): The path to the visual mesh file.
+        qc_phymesh (str): The path to the physical mesh file.
+        qc_cdmaterials_list (list): A list of material paths.
+        has_collision (bool): Whether the model has collision.
+        has_materials (bool): Whether the model has materials.
+    
+    Returns:
+        QCWriter: The initialized QCWriter instance.
+    """
+    paths = {
+        'qc_path': qc_path,
+        'qc_modelpath': qc_modelpath,
+        'qc_vismesh': qc_vismesh,
+        'qc_phymesh': qc_phymesh
+    }
+
+    attributes = {
+        'qc_mass': context.scene.mass_text_input if not context.scene.staticprop else 1,
+        'qc_surfaceprop': context.scene.surfaceprop,
+        'qc_cdmaterials_list': qc_cdmaterials_list,
+        'qc_maxconvexpieces': CountIslands(context.scene.phy_mesh) if has_collision else 0
+    }
+
+    flags = {
+        'qc_staticprop': context.scene.staticprop,
+        'qc_mostlyopaque': context.scene.mostlyopaque,
+        'qc_concave': has_collision and CountIslands(context.scene.phy_mesh) > 1,
+        'has_collision': has_collision,
+        'has_materials': has_materials
+    }
+
+    qc_writer = QCWriter(paths, attributes, flags)
+    return qc_writer
 
 if __name__ == "__main__":
     register()
