@@ -146,7 +146,7 @@ class AutoMDLOperator(bpy.types.Operator):
         self.move_compiled_files(qc_modelpath, blend_path)
         
         material_manager = MaterialManager(context)
-        material_manager.create_material_folders(blend_path, qc_cdmaterials_list, has_materials)
+        material_manager.create_materials(blend_path, qc_cdmaterials_list, has_materials)
 
         self.report({'INFO'}, f"If compile was successful, output should be in \"{os.path.dirname(blend_path)}\"")
         return {'FINISHED'}
