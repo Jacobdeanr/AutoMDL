@@ -1,12 +1,11 @@
 import bpy
 import os
 from .auto_mdl_config import AutoMDLConfig
-from .utils import to_models_relative_path, is_float
+from .utils import to_models_relative_path, is_float, format_game_select_items
 
 
 class AutoMDLPanel(bpy.types.Panel):
     """Creates a panel in the 3D view's sidebar for the AutoMDL add-on."""
-    
     bl_label = "AutoMDL"
     bl_idname = "VIEW3D_PT_automdl_panel"
     bl_space_type = 'VIEW_3D'
@@ -26,10 +25,9 @@ class AutoMDLPanel(bpy.types.Panel):
 
     def draw_compiler_options(self, layout, context):
         """Draws the compiler selection options."""
-        print("I'm trying to draw the compiler options")
         config = AutoMDLConfig()
         row = layout.row()
-        if config.steam_path is not None:
+        if config.game_path_manager.steam_path is not None:
             row.label(text="Choose compiler:")
             row = layout.row()
             self.define_game_select_dropdown(context)
@@ -43,17 +41,8 @@ class AutoMDLPanel(bpy.types.Panel):
     def define_game_select_dropdown(self, context):
         """Defines the game select dropdown property in the Blender UI."""
         config = AutoMDLConfig()
-        game_select_items_enum = []
-        for game_path in config.games_paths_list:
-            game_name = str(os.path.basename(os.path.dirname(game_path)))
-            item = (game_path, game_name, "")
-            game_select_items_enum.append(item)
+        return format_game_select_items(config.game_path_manager.games_paths_list)
 
-        bpy.types.Scene.game_select = bpy.props.EnumProperty(
-            name="Selected Option",
-            items=game_select_items_enum,
-            update=onGameDropdownChanged
-        )
 
     def draw_operator_button(self, layout):
         """Draws the button to execute the main operation."""
@@ -90,18 +79,9 @@ class AutoMDLPanel(bpy.types.Panel):
             if context.scene.cdmaterials_type == '0':
                 self.draw_auto_vmt_paths(layout, context)
             else:
-                draw_ui_list(layout, context, 'cdmaterials_list', 'cdmaterials_active_index', 'cdmaterials_list_unique_id')
+                draw_ui_list(layout, context, 'cdmaterials_list', 'cdmaterials_list_active_index', 'cdmaterials_list_unique_id')
         else:
             layout.row().label(text="Visual mesh has no materials", icon='INFO')
-    
-    def draw_ui_list(layout, context, list_path, active_index_path, unique_id):
-        layout.template_list(
-            "UI_UL_list", unique_id,
-            getattr(context, list_path.rsplit('.', 1)[0]),
-            list_path.rsplit('.', 1)[1],
-            getattr(context, active_index_path.rsplit('.', 1)[0]),
-            active_index_path.rsplit('.', 1)[1]
-        )
 
     def draw_auto_vmt_paths(self, layout, context):
         """Draws the automatically generated VMT paths."""
@@ -125,5 +105,10 @@ class AutoMDLPanel(bpy.types.Panel):
     def is_mass_text_input_invalid(self, context):
         return not is_float(context.scene.mass_text_input)
 
-def onGameDropdownChanged(context):
-    print("onGameDropdownCahnged")
+def draw_ui_list(layout, context, list_path, active_index_path, unique_id):
+    scene = context.scene
+    layout.template_list(
+        "UI_UL_list", unique_id,
+        scene, list_path,
+        scene, active_index_path 
+    )

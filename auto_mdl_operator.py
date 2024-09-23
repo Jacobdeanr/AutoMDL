@@ -8,6 +8,14 @@ from .qc_writer import QCWriter
 from .mesh_exporter import MeshExporter
 from .auto_mdl_config import AutoMDLConfig
 
+def check_visible_mesh_has_mesh(context):
+    vis_mesh_obj = context.scene.vis_mesh
+    return (vis_mesh_obj and vis_mesh_obj.type == 'MESH' and vis_mesh_obj.name in context.scene.objects) == True
+
+def check_physics_mesh_has_mesh(context):
+    phy_mesh_obj = context.scene.phy_mesh
+    return (phy_mesh_obj and phy_mesh_obj.type == 'MESH' and phy_mesh_obj.name in context.scene.objects) == True
+
 class AutoMDLOperator(bpy.types.Operator):
     bl_idname = "wm.automdl"
     bl_label = "Update MDL"
@@ -16,8 +24,8 @@ class AutoMDLOperator(bpy.types.Operator):
     def execute(self, context):
         config = AutoMDLConfig()
 
-        vis_mesh_valid = self.checkVisMeshHasMesh(context)
-        phy_mesh_valid = self.checkPhyMeshHasMesh(context)
+        vis_mesh_valid = check_visible_mesh_has_mesh(context)
+        phy_mesh_valid = check_physics_mesh_has_mesh(context)
         
         if not vis_mesh_valid:
             self.report({'ERROR'}, "Visual mesh is not valid")
@@ -52,17 +60,18 @@ class AutoMDLOperator(bpy.types.Operator):
         qc_writer.write_qc_file()
 
         self.compile_qc(qc_path)
-        self.move_compiled_files(qc_modelpath, blend_path)
+        self.copy_compiled_files(qc_modelpath, blend_path)
         
         material_manager = MaterialManager(context)
-        material_manager.create_materials(blend_path, qc_cdmaterials_list, has_materials)
+        material_manager.create_materials(qc_cdmaterials_list, has_materials)
 
-        self.report({'INFO'}, f"If compile was successful, output should be in \"{os.path.dirname(blend_path)}\"")
+        compile_path = os.path.join(config.game_path, "models", os.path.dirname(qc_modelpath))
+        self.report({'INFO'}, f"If compile was successful, output should be in \"{compile_path}\"")
         return {'FINISHED'}
 
     def set_game_path(self, context):
         config = AutoMDLConfig()
-        if config.game_select_method_is_dropdown:
+        if config.game_path_manager.game_select_method_is_dropdown:
             game_path = context.scene.game_select
         else:
             game_path = config.gameManualTextGameinfoPath
@@ -79,11 +88,11 @@ class AutoMDLOperator(bpy.types.Operator):
     def check_meshes(self, context):
         has_collision = False
         phy_mesh_obj = context.scene.phy_mesh
-        if phy_mesh_obj and phy_mesh_obj.name in bpy.data.objects:
+        if phy_mesh_obj and phy_mesh_obj.name in context.scene.objects:
             has_collision = True
 
-        vis_mesh_valid = self.checkVisMeshHasMesh(context)
-        phy_mesh_valid = self.checkPhyMeshHasMesh(context)
+        vis_mesh_valid = check_visible_mesh_has_mesh(context)
+        phy_mesh_valid = check_physics_mesh_has_mesh(context)
 
         if not vis_mesh_valid:
             self.report({'ERROR'}, "Please select a mesh for Visual mesh")
@@ -137,7 +146,7 @@ class AutoMDLOperator(bpy.types.Operator):
         studiomdl_args = [config.studiomdl_path, "-game", config.game_path, "-nop4", "-quiet", "-nowarnings", "-nox360", qc_path]
         subprocess.run(studiomdl_args)
 
-    def move_compiled_files(self, qc_modelpath, blend_path):
+    def copy_compiled_files(self, qc_modelpath, blend_path):
         config = AutoMDLConfig()
         compile_path = os.path.join(config.game_path, "models", os.path.dirname(qc_modelpath))
         move_path = os.path.dirname(blend_path)
@@ -147,8 +156,13 @@ class AutoMDLOperator(bpy.types.Operator):
         for ext in compiled_exts:
             src = os.path.join(compile_path, compiled_model_name + ext)
             dest = os.path.join(move_path, compiled_model_name + ext)
+            print(f"Copying {src} to {dest}")
             if os.path.isfile(src):
-                shutil.move(src, dest)
+                try:
+                    shutil.copy(src, dest)
+                except Exception as e:
+                    self.report({'ERROR'}, f"Failed to move {src} to {dest}: {e}")
+                    return {'CANCELLED'}
 
         if os.path.isdir(compile_path) and not os.listdir(compile_path):
             os.rmdir(compile_path)
@@ -165,13 +179,13 @@ class AutoMDLOperator(bpy.types.Operator):
             'qc_mass': context.scene.mass_text_input if not context.scene.staticprop else 1,
             'qc_surfaceprop': context.scene.surfaceprop,
             'qc_cdmaterials_list': qc_cdmaterials_list,
-            'qc_maxconvexpieces': self.CountIslands(context.scene.phy_mesh) if has_collision else 0
+            'qc_maxconvexpieces': self.count_islands(context.scene.phy_mesh) if has_collision else 0
         }
 
         flags = {
             'qc_staticprop': context.scene.staticprop,
             'qc_mostlyopaque': context.scene.mostlyopaque,
-            'qc_concave': has_collision and self.CountIslands(context.scene.phy_mesh) > 1,
+            'qc_concave': has_collision and self.count_islands(context.scene.phy_mesh) > 1,
             'has_collision': has_collision,
             'has_materials': has_materials
         }
@@ -202,15 +216,6 @@ class AutoMDLOperator(bpy.types.Operator):
     def restore_mode(self, context_mode_snapshot):
         if context_mode_snapshot != "null":
             bpy.ops.object.mode_set(mode=context_mode_snapshot)
-
-    def checkVisMeshHasMesh(self, context):
-        vis_mesh_obj = context.scene.vis_mesh
-        return (vis_mesh_obj and vis_mesh_obj.type == 'MESH' and vis_mesh_obj.name in context.scene.objects) == True
-
-
-    def checkPhyMeshHasMesh(self, context):
-        phy_mesh_obj = context.scene.phy_mesh
-        return (phy_mesh_obj and phy_mesh_obj.type == 'MESH' and phy_mesh_obj.name in context.scene.objects) == True
     
     def to_models_relative_path(self, file_path):
         MODELS_FOLDER_NAME = "models"
@@ -222,3 +227,45 @@ class AutoMDLOperator(bpy.types.Operator):
             return None
 
         return os.path.splitext(os.path.relpath(file_path, root))[0].replace("\\", "/")
+
+    def count_islands( self, obj ):
+        #Prepare the paths/links from each vertex to others
+        paths = self.make_vertex_paths( obj.data.vertices, obj.data.edges )
+        found = True
+        n = 0
+        while found:
+            try:
+                #Get one input as long there is one
+                startingIndex = next( iter( paths.keys() ) )
+                n = n + 1
+                #Deplete the paths dictionary following this starting index
+                self.follow_edges( startingIndex, paths )               
+            except:
+                found = False
+        return n
+    
+    def make_vertex_paths( self, verts, edges ):
+        #Initialize the path with all vertices indexes
+        result = {v.index: set() for v in verts}
+        #Add the possible paths via edges
+        for e in edges:
+            result[e.vertices[0]].add(e.vertices[1])
+            result[e.vertices[1]].add(e.vertices[0])
+        return result
+    
+    def follow_edges( self, startingIndex, paths ):
+        current = [startingIndex]
+
+        follow = True
+        while follow:
+            #Get indexes that are still in the paths
+            eligible = set( [ind for ind in current if ind in paths] )
+            if len( eligible ) == 0:
+                follow = False #Stops if no more
+            else:
+                #Get the corresponding links
+                next = [paths[i] for i in eligible]
+                #Remove the previous from the paths
+                for key in eligible: paths.pop( key )
+                #Get the new links as new inputs
+                current = set( [ind for sub in next for ind in sub] )

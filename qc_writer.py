@@ -6,6 +6,7 @@ class QCWriter:
 
     def write_qc_file(self):
         """Write the QC file with all necessary information."""
+        print(f"Writing QC file: {self.paths['qc_path']}")
         with open(self.paths['qc_path'], "w") as file:
             self._write_model_section(file)
             self._write_static_prop(file)
