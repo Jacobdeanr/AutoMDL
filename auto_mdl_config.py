@@ -25,21 +25,86 @@ class GamePathManager:
         
         if steam_path:
             self.game_select_method_is_dropdown = True
-            self.steam_path = os.path.join(steam_path, "").replace("\\", "/")
-            
-            library_paths = []
+            self.steam_path = os.path.join(steam_path, "").replace("\\", "/").lower()  # Normalize the case
+
+            library_paths = [self.steam_path]
 
             # Retrieve additional library paths from Steam's libraryfolders.vdf file
             additional_library_paths = self.get_additional_steam_library_paths()
             if additional_library_paths:
                 library_paths.extend(additional_library_paths)
+
+            # Remove duplicates by normalizing and converting to lowercase
+            library_paths = list(set([Path(p).resolve().as_posix().lower() for p in library_paths]))
             
             # Search for games across all Steam library paths
             self.games_paths_list = self.get_games_list(library_paths)
         else:
             self.game_select_method_is_dropdown = False
             self.steam_path = None
+        
+        print(f'Steam path: {self.steam_path}\nGames paths: {self.games_paths_list}')
 
+    def get_additional_steam_library_paths(self):
+        """Retrieve additional Steam library paths from libraryfolders.vdf."""
+        library_paths = []
+        try:
+            library_vdf_path = os.path.join(self.steam_path, "steamapps", "libraryfolders.vdf")
+            print(f'Reading library paths from: {library_vdf_path}')
+            if os.path.exists(library_vdf_path):
+                with open(library_vdf_path, 'r') as file:
+                    for line in file:
+                        if 'path' in line:
+                            # Extract the path from the VDF file (assumes a format like "path" "D:\\SteamLibrary")
+                            path = line.split('"')[3]
+                            full_library_path = path.replace("\\", "/").lower()
+
+                            # Check if the 'steamapps' directory exists for this library path
+                            steamapps_path = Path(full_library_path) / "steamapps"
+                            if steamapps_path.exists():
+                                print(f'Found library path: {full_library_path}')
+                                library_paths.append(full_library_path)
+                            else:
+                                print(f"Steamapps directory does not exist at: {steamapps_path}")
+        except Exception as e:
+            print(f"Failed to retrieve additional library paths: {e}")
+        
+        return library_paths
+    
+    def get_games_list(self, library_paths):
+        """Get a list of Source games installed across all Steam library paths."""
+        games_list = []
+        
+        for library_path in library_paths:
+            common_path = Path(library_path).resolve() / "steamapps/common"
+
+            # Check if 'steamapps/common' exists before proceeding
+            if not common_path.exists():
+                print(f"Directory does not exist: {common_path}")
+                continue
+
+            subdirectories = [x for x in common_path.iterdir() if x.is_dir()]
+            
+            for subdir in subdirectories:
+                if path_exists(subdir / "bin" / "studiomdl.exe"):
+                    gameinfo_paths = self._find_all_gameinfo_paths(subdir)
+                    games_list.extend([Path(p).resolve().as_posix().lower() for p in gameinfo_paths])
+        
+        # Remove duplicates in the games list
+        games_list = list(set(games_list))
+        
+        return games_list
+    
+    def _find_all_gameinfo_paths(self, base_path):
+        """Recursively find all gameinfo.txt files in subdirectories."""
+        gameinfo_paths = []
+        for subdir in base_path.iterdir():
+            if subdir.is_dir():
+                if path_exists(subdir / "gameinfo.txt"):
+                    gameinfo_paths.append(str(subdir))  # Add the path containing gameinfo.txt
+                gameinfo_paths.extend(self._find_all_gameinfo_paths(subdir))
+        return gameinfo_paths
+    
     def get_steam_install_path(self):
         """Retrieve the Steam installation path from Windows registry."""
         if os.name == 'nt':
@@ -54,48 +119,6 @@ class GamePathManager:
                 except Exception as e:
                     print(f"Failed to get Steam path from {subkey}: {e}")
         return None
-
-    def get_additional_steam_library_paths(self):
-        """Retrieve additional Steam library paths from libraryfolders.vdf."""
-        library_paths = []
-        try:
-            library_vdf_path = os.path.join(self.steam_path, "steamapps", "libraryfolders.vdf")
-            if os.path.exists(library_vdf_path):
-                with open(library_vdf_path, 'r') as file:
-                    for line in file:
-                        if 'path' in line:
-                            # Extract the path from the VDF file (assumes a format like "path" "D:\\SteamLibrary")
-                            path = line.split('"')[3]
-                            library_paths.append(path.replace("\\", "/"))
-        except Exception as e:
-            print(f"Failed to retrieve additional library paths: {e}")
-        
-        return library_paths
-
-    def get_games_list(self, library_paths):
-        """Get a list of Source games installed across all Steam library paths."""
-        games_list = []
-        
-        for library_path in library_paths:
-            common = Path(library_path) / "steamapps/common"
-            subdirectories = [x for x in common.iterdir() if x.is_dir()]
-            
-            for subdir in subdirectories:
-                if path_exists(subdir / "bin" / "studiomdl.exe"):
-                    gameinfo_paths = self._find_all_gameinfo_paths(subdir)
-                    games_list.extend(gameinfo_paths)
-        
-        return games_list
-    
-    def _find_all_gameinfo_paths(self, base_path):
-        """Recursively find all gameinfo.txt files in subdirectories."""
-        gameinfo_paths = []
-        for subdir in base_path.iterdir():
-            if subdir.is_dir():
-                if path_exists(subdir / "gameinfo.txt"):
-                    gameinfo_paths.append(str(subdir))  # Add the path containing gameinfo.txt
-                gameinfo_paths.extend(self._find_all_gameinfo_paths(subdir))
-        return gameinfo_paths
 
 class CDMaterialsManager:
     def initialize_cdmaterials_list(self):
